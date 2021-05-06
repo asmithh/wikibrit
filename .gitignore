@@ -1,0 +1,6 @@
+*.pkl
+*.txt
+revisions/*
+pickles/*
+*.lmp
+*.ctrl
