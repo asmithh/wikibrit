@@ -24,25 +24,31 @@ punctuation_no_underscore.remove("_")
 
 my_dict = corpora.Dictionary()
 pickles = []
-filter_keys = {'='}
+filter_keys = {"="}
 
+L = len(os.listdir('./revisions'))
+tot = 0
 for wiki_version in os.listdir('./revisions'):
+	if tot % 500 == 0:
+		print(tot / L)
+	tot += 1
 	words = []
 	with open(os.path.join('./revisions', wiki_version)) as f:
 		for line in f.readlines():
+			line = re.sub("[^a-zA-Z ]+", "", line)
 			words.extend(line.split())
-	content_no_punctuation = [word for word in words if re.match("[a-zA-Z0-9]+", word)]
+	content_no_punctuation = [word.lower() for word in words]
     # here we remove stopwords
 	content_no_stopwords = [word for word in content_no_punctuation if word not in stopwords]
 	content_lemmatized = [lemmatizer.lemmatize(word) for word in content_no_stopwords]
 	content_not_short = [word for word in content_lemmatized if len(word) > 2]
-	content_no_weird = [word for word in content_not_short if set([l for l in word]) & filter_keys != {}]
-	pickle_filename = wiki_version[:-4] + '.pkl'
+	pickle_filename = 'article_pickles/' + wiki_version[:-4] + '.pkl'
 	pickle.dump(content_not_short, open(pickle_filename, 'wb'))
 	pickles.append(pickle_filename)
-	my_dict.add_documents([content_not_weird])
+	my_dict.add_documents([content_not_short])
 
-my_dict.filter_extremes(no_below=int(len(os.listdir('./revisions')) / 50), no_above=0.5)
+my_dict.filter_extremes(no_below=int(len(os.listdir('./revisions')) / 50), no_above=0.9)
+# my_dict.filter_extremes(no_below=2, no_above=0.5)
 
 corpus = []
 for pickle_file in pickles:
@@ -56,6 +62,7 @@ lda_model = models.LdaModel(
 )
 
 topic_keywords = []	
+pickle.dump(lda_model, open('lda_model.pkl', 'wb'))
 for idx, topic in lda_model.show_topics(
     num_topics=10, num_words=20, formatted=False
 ):
@@ -63,6 +70,8 @@ for idx, topic in lda_model.show_topics(
     for my_word in [w[0] for w in topic]:
         print(my_word)
     topic_keywords.append([w[0] for w in topic])
+
+pickle.dump(topic_keywords, open('topic_keywords.pkl', 'wb'))
 
 topics_by_doc = lda_model.load_document_topics()
 print(topics_by_doc)
