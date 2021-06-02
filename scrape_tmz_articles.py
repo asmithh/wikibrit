@@ -21,7 +21,7 @@ def scrape_individual_article(url):
     txt = re.sub('\n', '', txt)
     return txt, filed
 
-
+failed = []
 urls = pickle.load(open(pickle_filename, 'rb'))
 res = []
 for url in urls:
@@ -29,9 +29,26 @@ for url in urls:
         res.append(scrape_individual_article(url))
     except:
         print(url)
+        failed.append(url)
         continue
 
     if len(res) % 100 == 0:
         pickle.dump(res, open('articles_scraped.pkl', 'wb'))
 
+pickle_filename = 'tmz_urls_pg_100_thru_482.pkl'
+failed = []
+urls = pickle.load(open(pickle_filename, 'rb'))
+res = []
+for url in urls:
+    try:
+        res.append(scrape_individual_article(url))
+    except:
+        print(url)
+        failed.append(url)
+        continue
+
+    if len(res) % 100 == 0:
+        pickle.dump(res, open('articles_scraped.pkl', 'wb'))
+
+pickle.dump(failed, open('failed_tmz_urls.pkl', 'wb'))
 pickle.dump(res, open('articles_scraped_run_2.pkl', 'wb'))
