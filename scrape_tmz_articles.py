@@ -36,9 +36,7 @@ for url in urls:
         pickle.dump(res, open('articles_scraped.pkl', 'wb'))
 
 pickle_filename = 'tmz_urls_pg_100_thru_482.pkl'
-failed = []
 urls = pickle.load(open(pickle_filename, 'rb'))
-res = []
 for url in urls:
     try:
         res.append(scrape_individual_article(url))
