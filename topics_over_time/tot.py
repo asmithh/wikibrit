@@ -22,176 +22,284 @@ import numpy as np
 import scipy.stats
 import pickle
 from math import log
+from multiprocessing import Pool
+
 
 class TopicsOverTime:
-	def GetPnasCorpusAndDictionary(self, documents_path, timestamps_path, stopwords_path):
-		documents = []
-		timestamps = []
-		dictionary = set()
-		stopwords = set()
-		for line in fileinput.input(stopwords_path):
-			stopwords.update(set(line.lower().strip().split()))
-		for doc in fileinput.input(documents_path):
-			words = [word for word in doc.lower().strip().split() if word not in stopwords]
-			documents.append(words)
-			dictionary.update(set(words))
-		for timestamp in fileinput.input(timestamps_path):
-			num_titles = int(timestamp.strip().split()[0])
-			timestamp = float(timestamp.strip().split()[1])
-			timestamps.extend([timestamp for title in range(num_titles)])
-		for line in fileinput.input(stopwords_path):
-			stopwords.update(Set(line.lower().strip().split()))
-		first_timestamp = timestamps[0]
-		last_timestamp = timestamps[len(timestamps)-1]
-		timestamps = [1.0*(t-first_timestamp)/(last_timestamp-first_timestamp) for t in timestamps]
-		dictionary = list(dictionary)
-		assert len(documents) == len(timestamps)
-		return documents, timestamps, dictionary
+    def __init__(self, documents, timestamps, dictionary, n_topics=20, n_iter=100):
+        self.document_chunk_size = 500
+        self.max_iterations = n_iter  # max number of iterations in gibbs sampling
+        self.n_topics = n_topics  # previously T     # number of topics
+        self.n_documents = len(documents)  # previously D
+        self.vocab_size = len(dictionary)  # previously V
+        self.document_lengths = [len(doc) for doc in documents]  # previously N
 
-	def CalculateCounts(self, par):
-		for d in range(par['D']):
-			for i in range(par['N'][d]):
-				topic_di = par['z'][d][i]		#topic in doc d at position i
-				word_di = par['w'][d][i]		#word ID in doc d at position i
-				par['m'][d][topic_di] += 1
-				par['n'][topic_di][word_di] += 1
-				par['n_sum'][topic_di] += 1
+        self.alpha = (50.0 / self.n_topics) * np.ones(self.n_topics)
+        self.beta = 0.1 * np.ones(self.vocab_size)
+        self.beta_sum = np.sum(self.beta)
 
-	def InitializeParameters(self, documents, timestamps, dictionary):
-		par = {}						# dictionary of all parameters
-		par['dataset'] = 'pnas'			# dataset name
-		par['max_iterations'] = 100		# max number of iterations in gibbs sampling
-		par['T'] = 10					# number of topics
-		par['D'] = len(documents)
-		par['V'] = len(dictionary)
-		par['N'] = [len(doc) for doc in documents]
-		par['alpha'] = [50.0/par['T'] for _ in range(par['T'])]
-		par['beta'] = [0.1 for _ in range(par['V'])]
-		par['beta_sum'] = sum(par['beta'])
-		par['psi'] = [[1 for _ in range(2)] for _ in range(par['T'])]
-		par['betafunc_psi'] = [scipy.special.beta( par['psi'][t][0], par['psi'][t][1] ) for t in range(par['T'])]
-		par['word_id'] = {dictionary[i]: i for i in range(len(dictionary))}
-		par['word_token'] = dictionary
-		par['z'] = [[random.randrange(0,par['T']) for _ in range(par['N'][d])] for d in range(par['D'])]
-		par['t'] = [[timestamps[d] for _ in range(par['N'][d])] for d in range(par['D'])]
-		par['w'] = [[par['word_id'][documents[d][i]] for i in range(par['N'][d])] for d in range(par['D'])]
-		par['m'] = [[0 for t in range(par['T'])] for d in range(par['D'])]
-		par['n'] = [[0 for v in range(par['V'])] for t in range(par['T'])]
-		par['n_sum'] = [0 for t in range(par['T'])]
-		np.set_printoptions(threshold=np.inf)
-		np.seterr(divide='ignore', invalid='ignore')
-		self.CalculateCounts(par)
-		return par
+        self.psi = np.ones((2, self.n_topics))
+        self.beta_function_psi = [
+            scipy.special.beta(self.psi[t][0], self.psi[t][1])
+            for t in range(self.n_topics)
+        ]
+        self.word_id = {word: idx for idx, word in enumerate(dictionary)}
+        self.word_token = dictionary
 
-	def GetTopicTimestamps(self, par):
-		topic_timestamps = []
-		for topic in range(par['T']):
-			current_topic_timestamps = []
-			current_topic_doc_timestamps = [[ (par['z'][d][i]==topic)*par['t'][d][i] for i in range(par['N'][d])] for d in range(par['D'])]
-			for d in range(par['D']):
-				current_topic_doc_timestamps[d] = filter(lambda x: x!=0, current_topic_doc_timestamps[d])
-			for timestamps in current_topic_doc_timestamps:
-				current_topic_timestamps.extend(timestamps)
-			assert current_topic_timestamps != []
-			topic_timestamps.append(current_topic_timestamps)
-		return topic_timestamps
+        # timestamps[d][i] is the timestamp of the ith term in document d.
+        # previously t
+        self.timestamps = [
+            timestamps[d] * np.ones(self.document_lengths[d])
+            for d in range(self.n_documents)
+        ]
 
-	def GetMethodOfMomentsEstimatesForPsi(self, par):
-		topic_timestamps = self.GetTopicTimestamps(par)
-		psi = [[1 for _ in range(2)] for _ in range(len(topic_timestamps))]
-		for i in range(len(topic_timestamps)):
-			current_topic_timestamps = topic_timestamps[i]
-			timestamp_mean = np.mean(current_topic_timestamps)
-			timestamp_var = np.var(current_topic_timestamps)
-			if timestamp_var == 0:
-				timestamp_var = 1e-6
-			common_factor = timestamp_mean*(1-timestamp_mean)/timestamp_var - 1
-			psi[i][0] = 1 + timestamp_mean*common_factor
-			psi[i][1] = 1 + (1-timestamp_mean)*common_factor
-		return psi
+        # previously z
+        # topic_by_doc_tokens[d][i] is the topic associated with the ith term in document d.
+        self.topic_by_doc_tokens = [
+            np.random.randint(0, self.n_topics, self.document_lengths[d])
+            for d in range(self.n_documents)
+        ]
 
-	def ComputePosteriorEstimatesOfThetaAndPhi(self, par):
-		theta = deepcopy(par['m'])
-		phi = deepcopy(par['n'])
+        # words_by_doc_index[d][i] is the word ID of the ith word in document d
+        # previously w
+        self.words_by_doc_index = [
+            [self.word_id[documents[d][i]] for i in range(self.document_lengths[d])]
+            for d in range(self.n_documents)
+        ]
 
-		for d in range(par['D']):
-			if sum(theta[d]) == 0:
-				theta[d] = np.asarray([1.0/len(theta[d]) for _ in range(len(theta[d]))])
-			else:
-				theta[d] = np.asarray(theta[d])
-				theta[d] = 1.0*theta[d]/sum(theta[d])
-		theta = np.asarray(theta)
+        # previously m
+        # tokens_assigned_to_topics_by_doc[t][d] is the number of tokens assigned to topic t in document d
+        self.tokens_assigned_to_topics_by_doc = np.zeros(
+            (self, n_documents, self.n_topics)
+        )
 
-		for t in range(par['T']):
-			if sum(phi[t]) == 0:
-				phi[t] = np.asarray([1.0/len(phi[t]) for _ in range(len(phi[t]))])
-			else:
-				phi[t] = np.asarray(phi[t])
-				phi[t] = 1.0*phi[t]/sum(phi[t])
-		phi = np.asarray(phi)
+        # previously n
+        # word_topic_assignments[w][t] is the number of times word w is assigned to topic t
+        self.word_topic_assignments = np.zeros((self.n_topics, self.vocab_size))
 
-		return theta, phi
+        # previously n_sum
+        self.words_to_topic_total = np.zeros(self.n_topics)
+        print("initialized")
+        np.set_printoptions(threshold=np.inf)
+        np.seterr(divide="ignore", invalid="ignore")
+        self.CalculateCounts()
 
-	def ComputePosteriorEstimatesOfTheta(self, par):
-		theta = deepcopy(par['m'])
+    def CalculateCounts(self, par):
+        """
+        For each document in all documents:
+            For each word in each document:
+                topic_di is the assigned topic to the ith word in document d.
+                word_di is the word ID of that word (int ID).
+                the word count of words belonging to that topic in the document is incremented by one.
+                the number of times that word is assigned to that topic is incremented by one.
+                the overall number of words in that topic is incremented by one.
+        """
+        document_indices = [
+            (left_index, min(left_index + 500, self.n_documents))
+            for left_index in range(0, self.n_documents, self.document_chunk_size)
+        ]
 
-		for d in range(par['D']):
-			if sum(theta[d]) == 0:
-				theta[d] = np.asarray([1.0/len(theta[d]) for _ in range(len(theta[d]))])
-			else:
-				theta[d] = np.asarray(theta[d])
-				theta[d] = 1.0*theta[d]/sum(theta[d])
+        def calculate_counts(args):
+            tokens_assigned_to_topics_by_doc = args["tattbd"]
+            topic_by_doc_tokens = args["tbdt"]
+            words_by_doc_index = args["wbdi"]
+            word_topic_assignments = args["wta"]
+            words_to_topic_total = args["wttt"]
+            doc_lengths = args["dl"]
 
-		return np.matrix(theta)
+            for d in range(args["left_index"], args["right_index"]):
+                for i in range(doc_lengths[d]):
+                    topic_di = topics_by_doc_tokens[d][
+                        i
+                    ]  # topic in doc d at position i
+                    word_di = words_by_doc_index[d][i]  # word ID in doc d at position i
+                    tokens_assigned_to_topics_by_doc[d][topic_di] += 1
+                    word_topic_assignments[topic_di][word_di] += 1
+                    words_to_topic_total[topic_di] += 1
 
-	def ComputePosteriorEstimateOfPhi(self, par):
-		phi = deepcopy(par['n'])
+            return_package = {
+                "tattbd": tokens_assigned_to_topics_by_doc,
+                "wta": word_topic_assignments,
+                "wttt": words_to_topic_total,
+            }
 
-		for t in range(par['T']):
-			if sum(phi[t]) == 0:
-				phi[t] = np.asarray([1.0/len(phi[t]) for _ in range(len(phi[t]))])
-			else:
-				phi[t] = np.asarray(phi[t])
-				phi[t] = 1.0*phi[t]/sum(phi[t])
+            return return_package
 
-		return np.matrix(phi)
+        def make_arg_package(indices):
+            args = {}
+            args["tattbd"] = self.tokens_assigned_to_topics_by_doc
+            args["tbdt"] = self.topic_by_doc_tokens
+            args["wbdi"] = self.words_by_doc_index
+            args["wta"] = self.word_topic_assignments
+            args["wttt"] = self.words_to_topic_total
+            args["dl"] = doc_lengths
+            args["left_index"] = indices[0]
+            args["right_index"] = indices[1]
 
-	def TopicsOverTimeGibbsSampling(self, par):
-		for iteration in range(par['max_iterations']):
-			for d in range(par['D']):
-				for i in range(par['N'][d]):
-					word_di = par['w'][d][i]
-					t_di = par['t'][d][i]
+            return args
 
-					old_topic = par['z'][d][i]
-					par['m'][d][old_topic] -= 1
-					par['n'][old_topic][word_di] -= 1
-					par['n_sum'][old_topic] -= 1
+        args_list = [make_arg_package(idx) for idx in document_indices]
 
-					topic_probabilities = []
-					for topic_di in range(par['T']):
-						psi_di = par['psi'][topic_di]
-						topic_probability = 1.0 * (par['m'][d][topic_di] + par['alpha'][topic_di])
-						topic_probability *= ((1-t_di)**(psi_di[0]-1)) * ((t_di)**(psi_di[1]-1))
-						topic_probability /= par['betafunc_psi'][topic_di]
-						topic_probability *= (par['n'][topic_di][word_di] + par['beta'][word_di])
-						topic_probability /= (par['n_sum'][topic_di] + par['beta_sum'])
-						topic_probabilities.append(topic_probability)
-					sum_topic_probabilities = sum(topic_probabilities)
-					if sum_topic_probabilities == 0:
-						topic_probabilities = [1.0/par['T'] for _ in range(par['T'])]
-					else:
-						topic_probabilities = [p/sum_topic_probabilities for p in topic_probabilities]
-					
-					new_topic = list(np.random.multinomial(1, topic_probabilities, size=1)[0]).index(1)
-					par['z'][d][i] = new_topic
-					par['m'][d][new_topic] += 1
-					par['n'][new_topic][word_di] += 1
-					par['n_sum'][new_topic] += 1
+        with Pool(processes=8) as pool:
+            res = pool.imap_unordered(calculate_counts, args_list)
 
-				if d%1000 == 0:
-					print('Done with iteration {iteration} and document {document}'.format(iteration=iteration, document=d))
-			par['psi'] = self.GetMethodOfMomentsEstimatesForPsi(par)
-			par['betafunc_psi'] = [scipy.special.beta( par['psi'][t][0], par['psi'][t][1] ) for t in range(par['T'])]
-		par['m'], par['n'] = self.ComputePosteriorEstimatesOfThetaAndPhi(par)
-		return par['m'], par['n'], par['psi']
+        self.tokens_assigned_to_topics_by_doc = np.sum(
+            [r["tattbd"] for r in res], axis=0
+        )
+        self.word_topic_assignments = np.sum([r["wta"] for r in res], axis=0)
+        self.word_to_topic_total = np.sum([r["wttt"] for r in res], axis=0)
+
+    def GetTopicTimestamps(self):
+        topic_timestamps = []
+        for topic in range(self.n_topics):
+            current_topic_timestamps = []
+            current_topic_doc_timestamps = [
+                [
+                    (self.topic_by_doc_tokens[d][i] == topic) * self.timestamps[d][i]
+                    for i in range(self.document_lengths[d])
+                ]
+                for d in range(self.n_documents)
+            ]
+            for d in range(self.n_documents):
+                current_topic_doc_timestamps[d] = filter(
+                    lambda x: x != 0, current_topic_doc_timestamps[d]
+                )
+            for timestamps in current_topic_doc_timestamps:
+                current_topic_timestamps.extend(timestamps)
+            assert current_topic_timestamps != []
+            topic_timestamps.append(current_topic_timestamps)
+        return topic_timestamps
+
+    def GetMethodOfMomentsEstimatesForPsi(self):
+        topic_timestamps = self.GetTopicTimestamps(par)
+        psi = [[1 for _ in range(2)] for _ in range(len(topic_timestamps))]
+        for i in range(len(topic_timestamps)):
+            current_topic_timestamps = topic_timestamps[i]
+            timestamp_mean = np.mean(current_topic_timestamps)
+            timestamp_var = np.var(current_topic_timestamps)
+            if timestamp_var == 0:
+                timestamp_var = 1e-6
+            common_factor = timestamp_mean * (1 - timestamp_mean) / timestamp_var - 1
+            psi[i][0] = 1 + timestamp_mean * common_factor
+            psi[i][1] = 1 + (1 - timestamp_mean) * common_factor
+        return psi
+
+    def ComputePosteriorEstimatesOfThetaAndPhi(self):
+        theta = deepcopy(self.tokens_assigned_to_topics_by_doc)
+        phi = deepcopy(self.word_topic_assignments)
+
+        for d in range(self.n_documents):
+            if sum(theta[d]) == 0:
+                theta[d] = np.asarray(
+                    [1.0 / len(theta[d]) for _ in range(len(theta[d]))]
+                )
+            else:
+                theta[d] = np.asarray(theta[d])
+                theta[d] = 1.0 * theta[d] / sum(theta[d])
+        theta = np.asarray(theta)
+
+        for t in range(self.n_topics):
+            if sum(phi[t]) == 0:
+                phi[t] = np.asarray([1.0 / len(phi[t]) for _ in range(len(phi[t]))])
+            else:
+                phi[t] = np.asarray(phi[t])
+                phi[t] = 1.0 * phi[t] / sum(phi[t])
+        phi = np.asarray(phi)
+
+        return theta, phi
+
+    def ComputePosteriorEstimatesOfTheta(self):
+        theta = deepcopy(self.tokens_assigned_to_topics_by_doc)
+
+        for d in range(self.n_documents):
+            if sum(theta[d]) == 0:
+                theta[d] = np.asarray(
+                    [1.0 / len(theta[d]) for _ in range(len(theta[d]))]
+                )
+            else:
+                theta[d] = np.asarray(theta[d])
+                theta[d] = 1.0 * theta[d] / sum(theta[d])
+
+        return np.matrix(theta)
+
+    def ComputePosteriorEstimateOfPhi(self):
+        phi = deepcopy(self.word_topic_assignments)
+
+        for t in range(self.n_topics):
+            if sum(phi[t]) == 0:
+                phi[t] = np.asarray([1.0 / len(phi[t]) for _ in range(len(phi[t]))])
+            else:
+                phi[t] = np.asarray(phi[t])
+                phi[t] = 1.0 * phi[t] / sum(phi[t])
+
+        return np.matrix(phi)
+
+    def TopicsOverTimeGibbsSampling(self):
+        for iteration in range(self.max_iterations):
+            for d in range(self.n_documents):
+                for i in range(self.document_lengths[d]):
+                    word_di = self.words_by_doc_index[d][i]
+                    t_di = self.timestamps[d][i]
+
+                    old_topic = self.topic_by_doc_tokens[d][i]
+                    self.tokens_assigned_to_topics_by_doc[d][old_topic] -= 1
+                    self.word_topic_assignments[old_topic][word_di] -= 1
+                    self.words_to_topic_total[old_topic] -= 1
+
+                    topic_probabilities = []
+                    for topic_di in range(self.n_topics):
+                        psi_di = self.psi[topic_di]
+                        topic_probability = 1.0 * (
+                            self.tokens_assigned_to_topics_by_doc[d][topic_di]
+                            + self.alpha[topic_di]
+                        )
+                        topic_probability *= ((1 - t_di) ** (psi_di[0] - 1)) * (
+                            (t_di) ** (psi_di[1] - 1)
+                        )
+                        topic_probability /= self.beta_function_psi[topic_di]
+                        topic_probability *= (
+                            self.word_topic_assignments[topic_di][word_di]
+                            + self.beta[word_di]
+                        )
+                        topic_probability /= (
+                            self.words_to_topic_total[topic_di] + self.beta_sum
+                        )
+                        topic_probabilities.append(topic_probability)
+                    sum_topic_probabilities = sum(topic_probabilities)
+                    if sum_topic_probabilities == 0:
+                        topic_probabilities = [
+                            1.0 / self.n_topics for _ in range(self.n_topics)
+                        ]
+                    else:
+                        topic_probabilities = [
+                            p / sum_topic_probabilities for p in topic_probabilities
+                        ]
+
+                    new_topic = list(
+                        np.random.multinomial(1, topic_probabilities, size=1)[0]
+                    ).index(1)
+                    self.topic_by_doc_tokens[d][i] = new_topic
+                    self.tokens_assigned_to_topics_by_doc[d][new_topic] += 1
+                    self.word_topic_assignments[new_topic][word_di] += 1
+                    self.words_to_topic_total[new_topic] += 1
+
+                if d % 1000 == 0:
+                    print(
+                        "Done with iteration {iteration} and document {document}".format(
+                            iteration=iteration, document=d
+                        )
+                    )
+            self.psi = self.GetMethodOfMomentsEstimatesForPsi(par)
+            self.beta_function_psi = [
+                scipy.special.beta(self.psi[t][0], self.psi[t][1])
+                for t in range(self.n_topics)
+            ]
+        (
+            self.tokens_assigned_to_topics_by_doc,
+            self.word_topic_assignments,
+        ) = self.ComputePosteriorEstimatesOfThetaAndPhi(par)
+        return (
+            self.tokens_assigned_to_topics_by_doc,
+            self.word_topic_assignments,
+            self.psi,
+        )
