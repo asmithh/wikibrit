@@ -1,5 +1,10 @@
 import os
+import importlib
+import topics_over_time
+from topics_over_time.tot import TopicsOverTime
 import pickle
+import pandas as pd
+
 
 prefix = "./article_pickles/"
 content = [
@@ -7,7 +12,6 @@ content = [
 ]
 content = [[w for w in doc if len(w) < 20] for doc in content]
 
-import pandas as pd
 
 
 def to_seconds_from_epoch(fname):
@@ -18,9 +22,9 @@ def to_seconds_from_epoch(fname):
 
 timestamps = [to_seconds_from_epoch(fname) for fname in sorted(os.listdir(prefix))]
 
-import importlib
-import topics_over_time
-from topics_over_time.tot import TopicsOverTime
+# for testing purposes
+content = content[::500]
+timestamps = timestamps[::500]
 
 vocab = set()
 for doc in content:
@@ -35,7 +39,7 @@ import scipy
 import random
 import numpy as np
 
-tot = topics_over_time.tot.TopicsOverTime(content, timestamps, dictionary)
+tot = topics_over_time.tot.TopicsOverTime(content, timestamps, vocab)
 
 theta, phi, psi = tot.TopicsOverTimeGibbsSampling()
 
