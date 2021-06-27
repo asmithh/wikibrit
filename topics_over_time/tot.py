@@ -50,6 +50,31 @@ def calculate_counts(args):
     }
     return res
 
+def get_individual_topic_timestamp(args_dict):
+    document_lengths = args_dict['document_lengths']
+    n_documents = args_dict['n_documents']
+    topic_by_doc_tokens = args_dict['topic_by_doc_tokens']
+    timestamps = args_dict['timestamps']
+    topic = args_dict['topic']
+
+    current_topic_timestamps = []
+    current_topic_doc_timestamps = [
+        [
+            (topic_by_doc_tokens[d][i] == topic) * timestamps[d][i]
+            for i in range(document_lengths[d])
+        ]
+        for d in range(n_documents)
+    ]
+    for d in range(n_documents):
+        current_topic_doc_timestamps[d] = filter(
+            lambda x: x != 0, current_topic_doc_timestamps[d]
+        )
+    for timestamps in current_topic_doc_timestamps:
+        current_topic_timestamps.extend(timestamps)
+    assert current_topic_timestamps != []
+    return current_topic_timestamps
+
+
 class TopicsOverTime:
     def __init__(self, documents, timestamps, dictionary, n_topics=20, n_iter=100):
         self.document_chunk_size = 50
@@ -167,23 +192,19 @@ class TopicsOverTime:
 
     def GetTopicTimestamps(self):
         topic_timestamps = []
-        for topic in range(self.n_topics):
-            current_topic_timestamps = []
-            current_topic_doc_timestamps = [
-                [
-                    (self.topic_by_doc_tokens[d][i] == topic) * self.timestamps[d][i]
-                    for i in range(self.document_lengths[d])
-                ]
-                for d in range(self.n_documents)
-            ]
-            for d in range(self.n_documents):
-                current_topic_doc_timestamps[d] = filter(
-                    lambda x: x != 0, current_topic_doc_timestamps[d]
-                )
-            for timestamps in current_topic_doc_timestamps:
-                current_topic_timestamps.extend(timestamps)
-            assert current_topic_timestamps != []
-            topic_timestamps.append(current_topic_timestamps)
+        args_list = [
+            {
+                'document_lengths': self.document_lengths, 
+                'n_documents': self.n_documents, 
+                'topic_by_doc_tokens': self.topic_by_doc_tokens,
+                'timestamps': self.timestamps,
+                'topic': t
+            }
+            for t in range(self.n_topics)
+        ]
+        with Pool(processes=8) as pool:
+            topic_timestamps = [res for res in pool.map(get_individual_topic_timestamp, args_list)]
+
         return topic_timestamps
 
     def GetMethodOfMomentsEstimatesForPsi(self):

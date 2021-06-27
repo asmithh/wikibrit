@@ -42,7 +42,7 @@ for doc in content:
 timestamp_range = timestamps[-1] - timestamps[0]
 timestamps_scaled = [(t - timestamps[0]) / (1 + timestamp_range) for t in timestamps]
 
-vocab = [word for word, quantity in vocab.items() if quantity < len(content) * .75 and quantity > len(content) * .05]
+vocab = [word for word, quantity in vocab.items() if quantity < len(content) * .75 and quantity > len(content) * .15]
 vocab_set = set(vocab)
 content = [[w for w in doc if w in vocab_set] for doc in content]
 
