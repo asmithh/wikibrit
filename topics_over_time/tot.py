@@ -79,6 +79,7 @@ class TopicsOverTime:
     def __init__(self, documents, timestamps, dictionary, n_topics=20, n_iter=100):
         self.document_chunk_size = 50
         self.dictionary = dictionary
+        print(len(dictionary))
         self.max_iterations = n_iter  # max number of iterations in gibbs sampling
         self.n_topics = n_topics  # previously T     # number of topics
         self.n_documents = len(documents)  # previously D
@@ -96,7 +97,7 @@ class TopicsOverTime:
         self.word_id = {word: idx for idx, word in enumerate(dictionary)}
         self.word_token = dictionary
 
-        self.document_lengths = [len([w for w in doc if w in self.word_id]) for doc in documents]  # previously N
+        self.document_lengths = [len(doc) for doc in documents]  # previously N
         # timestamps[d][i] is the timestamp of the ith term in document d.
         # previously t
         self.timestamps = [
@@ -188,7 +189,8 @@ class TopicsOverTime:
             res_tattbd, axis=0
         )
         self.word_topic_assignments = np.sum(res_wta, axis=0)
-        self.word_to_topic_total = np.sum(res_wttt, axis=0)
+        print(self.word_topic_assignments)
+        self.words_to_topic_total = np.sum(res_wttt, axis=0)
 
     def GetTopicTimestamps(self):
         topic_timestamps = []
@@ -282,7 +284,6 @@ class TopicsOverTime:
                     self.tokens_assigned_to_topics_by_doc[d][old_topic] -= 1
                     self.word_topic_assignments[old_topic][word_di] -= 1
                     self.words_to_topic_total[old_topic] -= 1
-
                     topic_probabilities = []
                     for topic_di in range(self.n_topics):
                         psi_di = self.psi[topic_di]
@@ -336,7 +337,9 @@ class TopicsOverTime:
                 for t in range(self.n_topics)
             ]
             print(self.word_topic_assignments.shape)
+            print(self.word_topic_assignments)
             fast_keywords = []
+            wta_normed = np.array([col / np.sum(col) for col in self.word_topic_assignments.T]).T
             for idx, col in enumerate(self.word_topic_assignments):
                 indices = np.argpartition(col, -20)[-20:]
                 fast_keywords.append([self.dictionary[i] for i in indices])
