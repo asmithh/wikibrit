@@ -5,6 +5,9 @@ from topics_over_time.tot import TopicsOverTime
 import pickle
 import pandas as pd
 
+import numpy as np
+import scipy
+import random
 
 prefix = "./article_pickles/"
 content = [
@@ -21,28 +24,32 @@ def to_seconds_from_epoch(fname):
 
 
 timestamps = [to_seconds_from_epoch(fname) for fname in sorted(os.listdir(prefix))]
-
+min_timestamps = min(timestamps)
+delta_timestamps = max(timestamps) - min_timestamps
+timestamps = [(t - min_timestamps) / delta_timestamps for t in timestamps]
 # for testing purposes
-content = content[::500]
-timestamps = timestamps[::500]
+content = content[::50]
+timestamps = timestamps[::50]
 
-vocab = set()
+vocab = {}
 for doc in content:
     for word in doc:
         if word not in vocab:
-            vocab.add(word)
+            vocab[word] = 1
+        else:
+            vocab[word] = vocab[word] + 1
+
 timestamp_range = timestamps[-1] - timestamps[0]
 timestamps_scaled = [(t - timestamps[0]) / (1 + timestamp_range) for t in timestamps]
-vocab = list(vocab)
 
-import scipy
-import random
-import numpy as np
+vocab = [word for word, quantity in vocab.items() if quantity < len(content) * .75 and quantity > len(content) * .05]
+vocab_set = set(vocab)
+content = [[w for w in doc if w in vocab_set] for doc in content]
+
 
 tot = topics_over_time.tot.TopicsOverTime(content, timestamps, vocab)
 
 theta, phi, psi = tot.TopicsOverTimeGibbsSampling()
 
-import pickle
 
 pickle.dump((theta, phi, psi), open("theta_phi_psi_run_1.pkl", "wb"))

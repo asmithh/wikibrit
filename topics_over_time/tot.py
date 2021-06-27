@@ -53,11 +53,11 @@ def calculate_counts(args):
 class TopicsOverTime:
     def __init__(self, documents, timestamps, dictionary, n_topics=20, n_iter=100):
         self.document_chunk_size = 50
+        self.dictionary = dictionary
         self.max_iterations = n_iter  # max number of iterations in gibbs sampling
         self.n_topics = n_topics  # previously T     # number of topics
         self.n_documents = len(documents)  # previously D
         self.vocab_size = len(dictionary)  # previously V
-        self.document_lengths = [len(doc) for doc in documents]  # previously N
 
         self.alpha = (50.0 / self.n_topics) * np.ones(self.n_topics)
         self.beta = 0.1 * np.ones(self.vocab_size)
@@ -71,6 +71,7 @@ class TopicsOverTime:
         self.word_id = {word: idx for idx, word in enumerate(dictionary)}
         self.word_token = dictionary
 
+        self.document_lengths = [len([w for w in doc if w in self.word_id]) for doc in documents]  # previously N
         # timestamps[d][i] is the timestamp of the ith term in document d.
         # previously t
         self.timestamps = [
@@ -200,8 +201,8 @@ class TopicsOverTime:
         return psi
 
     def ComputePosteriorEstimatesOfThetaAndPhi(self):
-        theta = deepcopy(self.tokens_assigned_to_topics_by_doc)
-        phi = deepcopy(self.word_topic_assignments)
+        theta = self.tokens_assigned_to_topics_by_doc
+        phi = self.word_topic_assignments
 
         for d in range(self.n_documents):
             if sum(theta[d]) == 0:
@@ -224,7 +225,7 @@ class TopicsOverTime:
         return theta, phi
 
     def ComputePosteriorEstimatesOfTheta(self):
-        theta = deepcopy(self.tokens_assigned_to_topics_by_doc)
+        theta = self.tokens_assigned_to_topics_by_doc
 
         for d in range(self.n_documents):
             if sum(theta[d]) == 0:
@@ -238,7 +239,7 @@ class TopicsOverTime:
         return np.matrix(theta)
 
     def ComputePosteriorEstimateOfPhi(self):
-        phi = deepcopy(self.word_topic_assignments)
+        phi =self.word_topic_assignments
 
         for t in range(self.n_topics):
             if sum(phi[t]) == 0:
@@ -262,7 +263,6 @@ class TopicsOverTime:
                     self.words_to_topic_total[old_topic] -= 1
 
                     topic_probabilities = []
-                    
                     for topic_di in range(self.n_topics):
                         psi_di = self.psi[topic_di]
                         topic_probability = 1.0 * (
@@ -272,6 +272,7 @@ class TopicsOverTime:
                         topic_probability *= ((1 - t_di) ** (psi_di[0] - 1)) * (
                             (t_di) ** (psi_di[1] - 1)
                         )
+                        
                         topic_probability /= self.beta_function_psi[topic_di]
                         topic_probability *= (
                             self.word_topic_assignments[topic_di][word_di]
@@ -291,7 +292,6 @@ class TopicsOverTime:
                             p / sum_topic_probabilities for p in topic_probabilities
                         ]
 
-                    print(topic_probabilities)
                     new_topic = list(
                         np.random.multinomial(1, topic_probabilities, size=1)[0]
                     ).index(1)
@@ -300,18 +300,41 @@ class TopicsOverTime:
                     self.word_topic_assignments[new_topic][word_di] += 1
                     self.words_to_topic_total[new_topic] += 1
 
-                if d % 10 == 0:
+                if d % 50 == 0:
                     print(
                         "Done with iteration {iteration} and document {document}".format(
                             iteration=iteration, document=d
                         )
                     )
+                    print(sum_topic_probabilities)
+                    print(topic_probabilities)
+
             self.psi = self.GetMethodOfMomentsEstimatesForPsi()
             self.beta_function_psi = [
                 scipy.special.beta(self.psi[t][0], self.psi[t][1])
                 for t in range(self.n_topics)
             ]
-        (
+            print(self.word_topic_assignments.shape)
+            fast_keywords = []
+            for idx, col in enumerate(self.word_topic_assignments):
+                indices = np.argpartition(col, -20)[-20:]
+                fast_keywords.append([self.dictionary[i] for i in indices])
+                print([self.dictionary[i] for i in indices])
+                print()
+
+            if iteration % 7 == 0:
+                pickle.dump(
+                    {
+                        'tokens_assigned_to_topics_by_doc': self.tokens_assigned_to_topics_by_doc,
+                        'word_topic_assignments': self.word_topic_assignments,
+                        'dictionary': self.dictionary,
+                        'keywords': fast_keywords,
+                    },
+                    open('tot_dump_{}.pkl'.format(str(iteration)), 'wb')
+                )
+             
+
+        ( 
             self.tokens_assigned_to_topics_by_doc,
             self.word_topic_assignments,
         ) = self.ComputePosteriorEstimatesOfThetaAndPhi()
