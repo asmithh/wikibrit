@@ -26,36 +26,35 @@ from multiprocessing import Pool
 
 
 def calculate_counts(args):
-    tokens_assigned_to_topics_by_doc = args['tattbd']
-    topic_by_doc_tokens = args['tbdt']
-    words_by_doc_index = args['wbdi']
-    word_topic_assignments = args['wta']
-    words_to_topic_total = args['wttt']
-    doc_lengths = args['dl']
-    
-    for d in range(args['left_index'], args['right_index']):
+    tokens_assigned_to_topics_by_doc = args["tattbd"]
+    topic_by_doc_tokens = args["tbdt"]
+    words_by_doc_index = args["wbdi"]
+    word_topic_assignments = args["wta"]
+    words_to_topic_total = args["wttt"]
+    doc_lengths = args["dl"]
+
+    for d in range(args["left_index"], args["right_index"]):
         for i in range(doc_lengths[d]):
-            topic_di = topic_by_doc_tokens[d][
-                i
-            ]  # topic in doc d at position i
+            topic_di = topic_by_doc_tokens[d][i]  # topic in doc d at position i
             word_di = words_by_doc_index[d][i]  # word ID in doc d at position i
             tokens_assigned_to_topics_by_doc[d][topic_di] += 1
             word_topic_assignments[topic_di][word_di] += 1
             words_to_topic_total[topic_di] += 1
 
     res = {
-        'tattbd': tokens_assigned_to_topics_by_doc,
-        'wta': word_topic_assignments, 
-        'wttt': words_to_topic_total
+        "tattbd": tokens_assigned_to_topics_by_doc,
+        "wta": word_topic_assignments,
+        "wttt": words_to_topic_total,
     }
     return res
 
+
 def get_individual_topic_timestamp(args_dict):
-    document_lengths = args_dict['document_lengths']
-    n_documents = args_dict['n_documents']
-    topic_by_doc_tokens = args_dict['topic_by_doc_tokens']
-    timestamps = args_dict['timestamps']
-    topic = args_dict['topic']
+    document_lengths = args_dict["document_lengths"]
+    n_documents = args_dict["n_documents"]
+    topic_by_doc_tokens = args_dict["topic_by_doc_tokens"]
+    timestamps = args_dict["timestamps"]
+    topic = args_dict["topic"]
 
     current_topic_timestamps = []
     current_topic_doc_timestamps = [
@@ -76,7 +75,7 @@ def get_individual_topic_timestamp(args_dict):
 
 
 class TopicsOverTime:
-    def __init__(self, documents, timestamps, dictionary, n_topics=20, n_iter=100):
+    def __init__(self, documents, timestamps, dictionary, n_topics=10, n_iter=500):
         self.document_chunk_size = 50
         self.dictionary = dictionary
         print(len(dictionary))
@@ -85,7 +84,7 @@ class TopicsOverTime:
         self.n_documents = len(documents)  # previously D
         self.vocab_size = len(dictionary)  # previously V
 
-        self.alpha = (50.0 / self.n_topics) * np.ones(self.n_topics)
+        self.alpha = (100.0 / self.n_topics) * np.ones(self.n_topics)
         self.beta = 0.1 * np.ones(self.vocab_size)
         self.beta_sum = np.sum(self.beta)
 
@@ -107,17 +106,21 @@ class TopicsOverTime:
 
         # previously z
         # topic_by_doc_tokens[d][i] is the topic associated with the ith term in document d.
-        self.topic_by_doc_tokens = np.array([
-            np.random.randint(0, self.n_topics, self.document_lengths[d])
-            for d in range(self.n_documents)
-        ])
+        self.topic_by_doc_tokens = np.array(
+            [
+                np.random.randint(0, self.n_topics, self.document_lengths[d])
+                for d in range(self.n_documents)
+            ]
+        )
 
         # words_by_doc_index[d][i] is the word ID of the ith word in document d
         # previously w
-        self.words_by_doc_index = np.array([
-            [self.word_id[documents[d][i]] for i in range(self.document_lengths[d])]
-            for d in range(self.n_documents)
-        ])
+        self.words_by_doc_index = np.array(
+            [
+                [self.word_id[documents[d][i]] for i in range(self.document_lengths[d])]
+                for d in range(self.n_documents)
+            ]
+        )
 
         # previously m
         # tokens_assigned_to_topics_by_doc[t][d] is the number of tokens assigned to topic t in document d
@@ -136,7 +139,7 @@ class TopicsOverTime:
         np.seterr(divide="ignore", invalid="ignore")
         self.CalculateCounts()
         print("counts calculated")
-        
+
     def CalculateCounts(self):
         """
         For each document in all documents:
@@ -155,6 +158,7 @@ class TopicsOverTime:
         print(self.words_by_doc_index.shape)
         print(self.word_topic_assignments.shape)
         print(self.words_to_topic_total.shape)
+
         def make_arg_package(indices):
             args = {}
             args["tattbd"] = self.tokens_assigned_to_topics_by_doc
@@ -169,25 +173,23 @@ class TopicsOverTime:
             return args
 
         print(document_indices)
-        print('poop0')
+        print("poop0")
         args_list = [make_arg_package(idx) for idx in document_indices]
-        
+
         print(len(args_list))
-        print('poop')
+        print("poop")
         with Pool(processes=8) as pool:
             results = [res for res in pool.map(calculate_counts, args_list)]
-            res_tattbd = np.array([res['tattbd'] for res in results])
-            res_wta = np.array([res['wta'] for res in results])
-            res_wttt = np.array([res['wttt'] for res in results])
-        print('poop2')
-        
+            res_tattbd = np.array([res["tattbd"] for res in results])
+            res_wta = np.array([res["wta"] for res in results])
+            res_wttt = np.array([res["wttt"] for res in results])
+        print("poop2")
+
         print(res_tattbd.shape)
         print(res_wta.shape)
         print(res_wttt.shape)
 
-        self.tokens_assigned_to_topics_by_doc = np.sum(
-            res_tattbd, axis=0
-        )
+        self.tokens_assigned_to_topics_by_doc = np.sum(res_tattbd, axis=0)
         self.word_topic_assignments = np.sum(res_wta, axis=0)
         print(self.word_topic_assignments)
         self.words_to_topic_total = np.sum(res_wttt, axis=0)
@@ -196,16 +198,18 @@ class TopicsOverTime:
         topic_timestamps = []
         args_list = [
             {
-                'document_lengths': self.document_lengths, 
-                'n_documents': self.n_documents, 
-                'topic_by_doc_tokens': self.topic_by_doc_tokens,
-                'timestamps': self.timestamps,
-                'topic': t
+                "document_lengths": self.document_lengths,
+                "n_documents": self.n_documents,
+                "topic_by_doc_tokens": self.topic_by_doc_tokens,
+                "timestamps": self.timestamps,
+                "topic": t,
             }
             for t in range(self.n_topics)
         ]
         with Pool(processes=8) as pool:
-            topic_timestamps = [res for res in pool.map(get_individual_topic_timestamp, args_list)]
+            topic_timestamps = [
+                res for res in pool.map(get_individual_topic_timestamp, args_list)
+            ]
 
         return topic_timestamps
 
@@ -216,6 +220,7 @@ class TopicsOverTime:
             current_topic_timestamps = topic_timestamps[i]
             timestamp_mean = np.mean(current_topic_timestamps)
             timestamp_var = np.var(current_topic_timestamps)
+            print(timestamp_mean, timestamp_var)
             if timestamp_var == 0:
                 timestamp_var = 1e-6
             common_factor = timestamp_mean * (1 - timestamp_mean) / timestamp_var - 1
@@ -262,7 +267,7 @@ class TopicsOverTime:
         return np.matrix(theta)
 
     def ComputePosteriorEstimateOfPhi(self):
-        phi =self.word_topic_assignments
+        phi = self.word_topic_assignments
 
         for t in range(self.n_topics):
             if sum(phi[t]) == 0:
@@ -294,7 +299,7 @@ class TopicsOverTime:
                         topic_probability *= ((1 - t_di) ** (psi_di[0] - 1)) * (
                             (t_di) ** (psi_di[1] - 1)
                         )
-                        
+
                         topic_probability /= self.beta_function_psi[topic_di]
                         topic_probability *= (
                             self.word_topic_assignments[topic_di][word_di]
@@ -303,6 +308,7 @@ class TopicsOverTime:
                         topic_probability /= (
                             self.words_to_topic_total[topic_di] + self.beta_sum
                         )
+                        topic_probability += 0.000001
                         topic_probabilities.append(topic_probability)
                     sum_topic_probabilities = sum(topic_probabilities)
                     if sum_topic_probabilities == 0:
@@ -336,11 +342,11 @@ class TopicsOverTime:
                 scipy.special.beta(self.psi[t][0], self.psi[t][1])
                 for t in range(self.n_topics)
             ]
-            print(self.word_topic_assignments.shape)
-            print(self.word_topic_assignments)
             fast_keywords = []
-            wta_normed = np.array([col / np.sum(col) for col in self.word_topic_assignments.T]).T
-            for idx, col in enumerate(self.word_topic_assignments):
+            wta_normed = np.array(
+                [col / np.sum(col) for col in self.word_topic_assignments.T]
+            ).T
+            for idx, col in enumerate(wta_normed):
                 indices = np.argpartition(col, -20)[-20:]
                 fast_keywords.append([self.dictionary[i] for i in indices])
                 print([self.dictionary[i] for i in indices])
@@ -349,16 +355,16 @@ class TopicsOverTime:
             if iteration % 7 == 0:
                 pickle.dump(
                     {
-                        'tokens_assigned_to_topics_by_doc': self.tokens_assigned_to_topics_by_doc,
-                        'word_topic_assignments': self.word_topic_assignments,
-                        'dictionary': self.dictionary,
-                        'keywords': fast_keywords,
+                        "tokens_assigned_to_topics_by_doc": self.tokens_assigned_to_topics_by_doc,
+                        "word_topic_assignments": self.word_topic_assignments,
+                        "dictionary": self.dictionary,
+                        "keywords": fast_keywords,
+                        "psi": self.psi,
                     },
-                    open('tot_dump_{}.pkl'.format(str(iteration)), 'wb')
+                    open("tot_dump_{}.pkl".format(str(iteration)), "wb"),
                 )
-             
 
-        ( 
+        (
             self.tokens_assigned_to_topics_by_doc,
             self.word_topic_assignments,
         ) = self.ComputePosteriorEstimatesOfThetaAndPhi()
