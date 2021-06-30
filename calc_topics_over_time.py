@@ -16,9 +16,13 @@ wiki_to_remove = {
     "aligncenter",
     "rowspan",
     "mdash",
+    "ndash",
+    "publishermtvcom",
+    "postscriptnoneref",
+    "formatogg",
 }
 
-wiki_substring_to_remove = ["date"]
+wiki_substring_to_remove = ["publisher", "nbsp", "author", "date", "year"]
 
 
 def wiki_substring_safe(word):
