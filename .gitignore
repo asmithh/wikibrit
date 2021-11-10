@@ -4,3 +4,5 @@ revisions/*
 pickles/*
 *.lmp
 *.ctrl
+*.tsv
+*.csv
