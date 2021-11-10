@@ -7,7 +7,7 @@ from bs4 import BeautifulSoup
 import mechanize
 
 
-pickle_filename = "tmz_urls_pg_1_thru_100.pkl"
+pickle_filename = "tmz_june_27_and_earlier_til_march_30.pkl"
 
 
 def scrape_individual_article(url):
@@ -51,4 +51,4 @@ for url in urls:
         pickle.dump(res, open("articles_scraped.pkl", "wb"))
 
 pickle.dump(failed, open("failed_tmz_urls.pkl", "wb"))
-pickle.dump(res, open("articles_scraped_run_2.pkl", "wb"))
+pickle.dump(res, open("articles_scraped_run_3.pkl", "wb"))
